@@ -1,0 +1,65 @@
+#!/usr/bin/perl -w
+
+# Copyright 2001-2006 The Apache Software Foundation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+=head1 NAME
+
+serve_file - Plugin for serving raw files
+
+=head1 SYNOPSIS
+
+  Plugin serve_file
+
+=head1 DESCRIPTION
+
+This plugin turns AxKit2 into a normal every-day httpd. Yay!
+
+Most httpds need to serve plain files. Things like favicon.ico and robots.txt
+that any sane web server would be lost without. So just load this plugin after
+all the others, and if your other plugins DECLINE to deliver the content, this
+kind little plugin will happily deliver your file without making any changes
+to it whatsoever. Ain't that nice?
+
+=head1 CONFIG
+
+None.
+
+=cut
+
+
+sub hook_response {
+    my ($self, $hd) = @_;
+    
+    my $ct = $hd->mime_type;
+    
+    if ($hd->request_method eq 'GET' || $hd->request_method eq 'HEAD') {
+        # and once we have it, start serving
+        $self->client->watch_read(0);
+        
+        my $file = $hd->filename;
+        $self->log(LOGINFO, "Serving file: $file");
+        if (open(my $fh, $file)) {
+            $hd->header('Content-Type', $ct);
+            $self->client->send_http_headers;
+            
+            local $/;
+            $self->client->write(<$fh>);
+            return OK;
+        }
+    }
+    
+    return DECLINED;
+}

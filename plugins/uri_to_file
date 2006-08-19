@@ -1,0 +1,130 @@
+#!/usr/bin/perl -w
+
+# Copyright 2001-2006 The Apache Software Foundation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+=head1 NAME
+
+uri_to_file - Convert URIs to filenames, and  other critical stuff
+
+=head1 SYNOPSIS
+
+  Plugin uri_to_file
+  
+  # optionally:
+  DirectoryIndex index.html
+
+=head1 DESCRIPTION
+
+This plugin provides the filename for a given URI. It is absolutely required
+that you load this plugin if you wish to serve files off the filesystem, or else
+re-implement its functionality somehow.
+
+It also splits off the path_info off the URI, provides a redirect when a
+directory without a "/" is requested, and implements C<DirectoryIndex> (see below).
+
+=head1 CONFIG
+
+=head2 DirectoryIndex STRING
+
+A filename to append to directory requests. If the file exists then it will be
+the filename used instead of the directory itself.
+
+=cut
+
+use File::Spec::Functions qw(canonpath catfile);
+use AxKit2::Utils qw(uri_decode);
+
+sub init {
+    my $self = shift;
+    $self->register_config('DirectoryIndex', sub { $self->set_dirindex(@_) });
+}
+
+sub set_dirindex {
+    my ($self, $config, $value) = @_;
+    my $key = $self->plugin_name . '::dirindex';
+    $config->notes($key, $value);
+}
+
+sub hook_uri_translation {
+    my ($self, $hd, $uri) = @_;
+    
+    $self->log(LOGINFO, "translate: $uri");
+    
+    
+    $uri =~ s/(\?.*)//;
+    my $removed = $1 || '';
+    
+    my $original_uri = $uri;
+    
+    $uri = uri_decode($uri);
+    
+    my $root = $self->config->path;
+    
+    $uri =~ s/^\Q$root// || die "$uri did not match config path $root";
+    
+    my $path = canonpath(catfile($self->config->docroot, $uri));
+    $path .= '/' if $uri =~ /\/$/; # canonpath will strip a trailing slash
+    
+    my $path_info = '';
+    
+    if (-d $path) {
+        if ($original_uri !~ /\/$/) {
+            # send redirect
+            $self->log(LOGINFO, "redirect to $original_uri/$removed");
+            $self->client->headers_out->code(302, "Found");
+            $self->client->headers_out->header('Location', "$original_uri/$removed");
+            $self->client->headers_out->header('Content-Type', 'text/html');
+            $self->client->send_http_headers;
+            $self->client->write(<<EOT);
+<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
+<HTML><HEAD>
+<TITLE>302 Found</TITLE>
+</HEAD><BODY>
+<H1>Found</H1>
+The document has moved <A HREF="$original_uri/$removed">here</A>.<P>
+<HR>
+</BODY></HTML>
+EOT
+            return DONE;
+        }
+        if (my $dirindex = $self->config->notes($self->plugin_name . '::dirindex')) {
+            my $filepath = catfile($path, $dirindex);
+            $path = $filepath if -f $filepath;
+        }
+    }
+    else {
+        while ($path =~ /\// && !-f $path) {
+            $path =~ s/(\/[^\/]*)$//;
+            $path_info = $1 . $path_info;
+        }
+        if ($path_info && -f _) {
+            $hd->path_info($path_info);
+            substr($original_uri, 0 - length($path_info)) = '';
+            $hd->request_uri($original_uri);
+        }
+        else {
+            $path .= $path_info;
+            $hd->path_info('');
+        }
+    }
+    
+    $self->log(LOGDEBUG, "Translated $uri to $path" . 
+        ($path_info ? " (path info: $path_info)" : ""));
+    
+    $hd->filename($path);
+    
+    return DECLINED;
+}

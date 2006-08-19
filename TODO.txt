@@ -1,0 +1,30 @@
+
+AxKit2 TODO List
+================
+
+- Implement Apache::Request-a-like and figure out how to past to Transformers
+    - Sort of done. POST/PUT body data goes through the body_data hook. I have
+      not yet written a plugin to parse these but it should be straightforward.
+      Querystring data is parsed and available via the param() method.
+
+- Add logging everywhere at reasonable levels
+
+- Implement better output of HTTP headers. Particularly caching headers (ETags etc).
+
+- Improve file delivery for hook_response. Use AIO.
+
+- When no response plugin triggers, issue 500 error. Implement 404 error in serve_file.
+
+- Implement serve_dir plugin. Should fire at hook_response if we're looking at a directory (or DirectoryIndex doesn't exist).
+
+- Add tests (eek!).
+
+- Add POD docs.
+
+- Support some form of .config for directories.
+
+- Support HTMLDoc.
+
+- Support PassiveTeX.
+
+- Allow console to reload plugins
