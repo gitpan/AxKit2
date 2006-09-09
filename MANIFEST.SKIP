@@ -10,6 +10,7 @@ CVS/.*
 \.bs$
 output/.*
 \.#
+\.DS_Store
 ^mess/
 ^sqlite/
 ^output/
@@ -28,3 +29,7 @@ output/.*
 etc/axkit.conf$
 access_log$
 myfirstplugin
+prof.out
+smallprof.out
+tmon.out
+test.log

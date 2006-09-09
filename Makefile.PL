@@ -34,6 +34,8 @@ WriteMakefile(
         'XML::LibXML'   => 1.59,
         'XML::LibXSLT'  => 1.59,
         'XML::LibXML::XPathContext' => 0.07,
+        'LWP::UserAgent' => 0,
+        'Test::Builder::Module' => 0.03,
     },
     ABSTRACT_FROM  => 'lib/AxKit2.pm',
     AUTHOR         => 'Apache Software Foundation <axkit-users@axkit.org>',
@@ -44,4 +46,18 @@ sub MY::libscan {
     my $path = $_[1];
     return '' if $path =~ /\B\.svn\b/;
     return $path;
+}
+
+sub MY::install {
+    package MY;
+    my $script = shift->SUPER::install(@_);
+
+    $script =~ s/^install :: (.*)$/install :: fail_install/m;
+    $script .= <<EOT;
+fail_install :
+\t\@\$(PERL) -e "die qq(Do not run _make install_. See README for details.\\n)"
+
+EOT
+
+    return $script;
 }

@@ -41,32 +41,20 @@ fancy like that. Patches welcome obviously ;-)
 
 =cut
 
-sub init {
-    my $self = shift;
-    
-    $self->register_config('LogFile', sub { $self->logfile(@_) });
+sub conf_RequestLog : Validate(TAKE1) {
+    my ($self, $value) = @_;
+
+    open(my $fh, '>>', $value) || die "open(>> $value) : $!";
+    return $fh;
 }
 
-sub logfile {
-    my $self = shift;
-    my $conf = shift;
-    
-    my $key = $self->plugin_name . "::log_file";
-    if (@_) {
-        my $value = shift;
-        open(my $fh, ">>$value") || die "open(>> $value) : $!";
-        $conf->notes($key, $fh);
-    }
-    $conf->notes($key);
-}
-
-use POSIX qw(strftime);
+use POSIX ();
 
 sub hook_response_sent {
     my ($self, $code) = @_;
     
     # [07/Aug/2006:21:08:52 +0000]
-    my $time = strftime("[%d/%b/%Y:%H:%M:%S +0000]", gmtime);
+    my $time = POSIX::strftime("[%d/%b/%Y:%H:%M:%S +0000]", gmtime);
     my $line = sprintf("%s %s %s %s \"%s\" %s %s \"%s\" \"%s\"\n",
         $self->client->peer_ip_string,
         '-',
@@ -79,7 +67,7 @@ sub hook_response_sent {
         $self->client->headers_in->header('User-Agent') || '-',
         );
     
-    my $logfile = $self->logfile($self->config) || die "No LogFile configured";
+    my $logfile = $self->config('RequestLog') || die "No LogFile configured";
     syswrite($logfile, $line) || die "Unable to write to logfile: $!";
     
     return DECLINED;

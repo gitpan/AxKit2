@@ -30,6 +30,7 @@ sub new {
     my %defaults = (
         Plugins => [],
         Notes => {},
+        CachedHooks => {},
         );
     
     my %args = ( __server => $server, __path => $path, %defaults, @_ );
@@ -75,14 +76,21 @@ sub plugin_dir {
     $self->{PluginDir} || $self->server->plugin_dir;
 }
 
+sub cached_hooks {
+    my $self = shift;
+    my $hook = shift;
+    @_ and $self->{CachedHooks}{$hook} = shift;
+    $self->{CachedHooks}{$hook};
+}
+
 sub notes {
     my $self = shift;
     my $key = shift || die "notes() requires a key";
     
-    @_ and $self->{Notes}{$key} = shift;
-    return exists ($self->{Notes}{$key}) ? 
-                   $self->{Notes}{$key}  :
-                   $self->server->notes($key);
+    @_ and $self->{Notes}{$key} = [ @_ ];
+    return $self->server->notes($key) if !exists $self->{Notes}{$key};
+    return @{ $self->{Notes}{$key} || [] } if wantarray;
+    ${ $self->{Notes}{$key} || [] }[0];
 }
 
 sub DESTROY {}

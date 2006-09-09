@@ -261,6 +261,12 @@ sub cmd_leaks {
     my $dump = shift || '';
     $dump = (uc($dump) eq 'DUMP') ? 1 : 0;
     
+    $self->write("Gathering GC stats in the background...\n");
+    
+    my $pid = fork;
+    die "Can't fork" unless defined $pid;
+    return if $pid;
+
     require Devel::GC::Helper;
     if ($dump) {
         require Data::Dumper;
@@ -269,12 +275,6 @@ sub cmd_leaks {
         #$Data::Dumper::Deparse = 1;
     }
     
-    $self->write("Gathering GC stats in the background...\n");
-    
-    my $pid = fork;
-    die "Can't fork" unless defined $pid;
-    return if $pid;
-
     # Child - run the leak sweep...
     my $leaks = Devel::GC::Helper::sweep();
     foreach my $leak (@$leaks) {
@@ -312,6 +312,12 @@ sub cmd_stats {
     $output .= "Current Connections: $current_connections\n";
     
     $self->write($output);
+}
+
+sub cmd_shutdown {
+    my $self = shift;
+    Danga::Socket->SetPostLoopCallback(sub { 0 });
+    $self->close("shutdown");
 }
 
 # Cleanup routine to get rid of timed out sockets

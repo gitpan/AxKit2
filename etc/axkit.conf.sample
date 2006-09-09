@@ -17,7 +17,7 @@ Plugin    logging/warn
 LogLevel  LOGDEBUG
 
 Plugin request_log
-LogFile access_log
+RequestLog access_log
 
 # setup console
 ConsolePort 18000
@@ -95,6 +95,16 @@ Plugin fast_mime_map
 #         XPathScript_OutputType text/html
 #      </Location>
 
+# generic DEMO, needs XSLT, XPathScript and TAL
+#     <Location /generic>
+#         DocumentRoot demo/generic
+#         DirectoryIndex index.xml
+#         Plugin generic_transform
+#         Transformation             XSLT(demo/generic/stylesheet.xsl)  \
+#                                    XPathScript(demo/generic/stylesheet.xps)  \
+#                                    TAL(demo/generic/stylesheet.tal)
+#      </Location>
+
 # Gallery DEMO
 #      <Location /gallery>
 #         DocumentRoot demo/gallery
@@ -109,6 +119,22 @@ Plugin fast_mime_map
 # Docs DEMO
 #     <Location /docs>
 #         Plugin demo/doc_viewer
+#     </Location>
+
+# Spod5 DEMO
+#     <Location /spod5>
+#         DirectoryIndex index.pod
+#         DocumentRoot demo/spod5
+#         Plugin spod5
+#     </Location>
+
+# MoeWiki DEMO
+#     <Location /moewiki>
+#        DocumentRoot demo/moewiki
+#        DirectoryIndex index.xml
+#        Plugin demo/moewiki
+#        Plugin generic_transform
+#        Transformation XSLT(demo/moewiki/global.xsl)
 #     </Location>
 
 </Server>

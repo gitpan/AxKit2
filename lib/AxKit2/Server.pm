@@ -24,6 +24,10 @@ use AxKit2::Connection;
 use AxKit2::Constants;
 use AxKit2::Client;
 
+use constant ACCEPT_MAX => 1000;
+
+our $ACCEPT_MAX = 1;
+
 sub create {
     my $class    = shift;
     my $servconf = shift;
@@ -41,20 +45,24 @@ sub create {
     IO::Handle::blocking($sock, 0);
     
     my $accept_handler = sub {
-        my $csock = $sock->accept;
-        return unless $csock;
-
-        AxKit2::Client->log(LOGDEBUG, "Listen child making a AxKit2::Connection for ", fileno($csock));
-
-        IO::Handle::blocking($csock, 0);
-        setsockopt($csock, IPPROTO_TCP, TCP_NODELAY, pack("l", 1)) or die;
-
-        if (my $client = eval { AxKit2::Connection->new($csock, $servconf) }) {
-            $client->watch_read(1);
-            return;
-        } else {
-            die("Error creating new Connection: $@") if $@;
+        for (1 .. $ACCEPT_MAX) {
+            my $csock = $sock->accept;
+            return unless $csock;
+    
+            IO::Handle::blocking($csock, 0);
+            setsockopt($csock, IPPROTO_TCP, TCP_NODELAY, pack("l", 1)) or die;
+    
+            if (my $client = eval { AxKit2::Connection->new($csock, $servconf) }) {
+                $client->watch_read(1);
+            }
+            else {
+                die("Error creating new Connection: $@") if $@;
+            }
         }
+        
+        # Accept more next time
+        $ACCEPT_MAX *= 2;
+        $ACCEPT_MAX = ACCEPT_MAX if $ACCEPT_MAX > ACCEPT_MAX;
     };
 
     Danga::Socket->AddOtherFds(fileno($sock) => $accept_handler);

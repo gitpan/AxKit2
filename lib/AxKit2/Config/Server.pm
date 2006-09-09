@@ -34,6 +34,7 @@ sub new {
         Plugins => [],
         Locations => [],
         Notes => {},
+        CachedHooks => {},
         );
 
     my %args = ( __global => $global, %defaults, @_ );
@@ -84,6 +85,13 @@ sub add_location {
     push @{$self->{Locations}}, shift;
 }
 
+sub cached_hooks {
+    my $self = shift;
+    my $hook = shift;
+    @_ and $self->{CachedHooks}{$hook} = shift;
+    $self->{CachedHooks}{$hook};
+}
+
 # given a path, find the config related to it
 # sometimes this is a Location config, sometimes Server (i.e. $self)
 sub get_config {
@@ -101,10 +109,10 @@ sub notes {
     my $self = shift;
     my $key = shift || die "notes() requires a key";
     
-    @_ and $self->{Notes}{$key} = shift;
-    return exists ($self->{Notes}{$key}) ? 
-                   $self->{Notes}{$key}  :
-                   $self->global->notes($key);
+    @_ and $self->{Notes}{$key} = [ @_ ];
+    return $self->global->notes($key) if !exists $self->{Notes}{$key};
+    return @{ $self->{Notes}{$key} || [] } if wantarray;
+    ${ $self->{Notes}{$key} || [] }[0];
 }
 
 1;

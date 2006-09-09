@@ -45,86 +45,66 @@ your custom mappings nor the default mappings). To override the default mapping:
 
 =cut
 
-sub init {
-    my $self = shift;
-    
-    $self->register_config('MimeMap', sub { $self->add_mime_map(@_) });
-}
-
-sub add_mime_map {
-    my ($self, $conf, $ext, $type) = @_;
-    
-    my $key = $self->plugin_name . '::mime_map';
-    my $map = $conf->notes($key) || {};
-    $map->{$ext} = $type;
-    $conf->notes($key, $map);
-}
-
-sub mime_map {
-    my $self = shift;
-    my $conf = $self->config;
-    my $key = $self->plugin_name . '::mime_map';
-    return $conf->notes($key) || {};
-}
-
 my %default_types = (
-        '.html'     => 'text/html',
-        '.htm'      => 'text/html',
-        '.txt'      => 'text/plain',
-        '.gif'      => 'image/gif',
-        '.jpeg'     => 'image/jpeg',
-        '.jpg'      => 'image/jpeg',
-        '.png'      => 'image/png',
-        '.tiff'     => 'image/tiff',
-        '.css'      => 'text/css',
-        '.csv'      => 'text/csv',
-        '.rtf'      => 'text/rtf',
-        '.xml'      => 'text/xml',
-        '.mpg'      => 'video/mpeg',
-        '.avi'      => 'application/octet-stream',
-        '.eml'      => 'message/rfc822',
-        '.mp2'      => 'audio/mpeg',
-        '.mp3'      => 'audio/mpeg',
-        '.mp4'      => 'audio/mp4',
-        '.js'       => 'application/ecmascript',
-        '.doc'      => 'application/msword',
-        '.gz'       => 'application/octet-stream',
-        '.xhtml'    => 'application/xhtml+xml',
-        '.dtd'      => 'application/xml-dtd',
-        '.xls'      => 'application/ms-excel',
-        '.ppt'      => 'application/ms-powerpoint',
-        '.pps'      => 'application/ms-powerpoint',
-        '.rpm'      => 'application/octet-stream',
-        '.pdf'      => 'application/pdf',
-        '.ps'       => 'application/postscript',
-        '.rdf'      => 'application/rdf+xml',
-        '.smil'     => 'application/smil+xml',
+        'html'     => 'text/html',
+        'htm'      => 'text/html',
+        'txt'      => 'text/plain',
+        'gif'      => 'image/gif',
+        'jpeg'     => 'image/jpeg',
+        'jpg'      => 'image/jpeg',
+        'png'      => 'image/png',
+        'tiff'     => 'image/tiff',
+        'ico'      => 'image/x-icon',
+        'css'      => 'text/css',
+        'csv'      => 'text/csv',
+        'rtf'      => 'text/rtf',
+        'xml'      => 'text/xml',
+        'mpg'      => 'video/mpeg',
+        'avi'      => 'application/octet-stream',
+        'eml'      => 'message/rfc822',
+        'mp2'      => 'audio/mpeg',
+        'mp3'      => 'audio/mpeg',
+        'mp4'      => 'audio/mp4',
+        'js'       => 'application/ecmascript',
+        'doc'      => 'application/msword',
+        'gz'       => 'application/octet-stream',
+        'xhtml'    => 'application/xhtml+xml',
+        'dtd'      => 'application/xml-dtd',
+        'xls'      => 'application/ms-excel',
+        'ppt'      => 'application/ms-powerpoint',
+        'pps'      => 'application/ms-powerpoint',
+        'rpm'      => 'application/octet-stream',
+        'pdf'      => 'application/pdf',
+        'ps'       => 'application/postscript',
+        'rdf'      => 'application/rdf+xml',
+        'smil'     => 'application/smil+xml',
         '#default'  => 'text/html',
     );
+
+sub conf_MimeMap {
+    my ($self,$ext,$type) = @_;
+    $self->config('MimeMap',{%default_types}) unless $self->config('MimeMap');
+	$ext =~ s/^\.//;
+    $self->config('MimeMap')->{$ext} = $type;
+    return ();
+}
 
 sub hook_mime_map {
     my ($self, $hd, $filename) = @_;
     
-    my $custom_map = $self->mime_map;
+    my $map = $self->config('MimeMap') || \%default_types;
     
     $filename =~ s/.*\///;
-    $self->log(LOGDEBUG, "mapping $filename");
     my @parts = split(/\./, $filename);
     my $uno = 0;
     while (@parts) {
         my $name = join('.', @parts);
-        $name = ".$name" if ($uno++);
-        $self->log(LOGDEBUG, "looking for mapping for: $name");
-        if (exists($custom_map->{$name})) {
-            $hd->mime_type($custom_map->{$name});
-            return OK;
-        }
-        if (exists($default_types{$name})) {
-            $hd->mime_type($default_types{$name});
+        if (exists($map->{$name})) {
+            $hd->mime_type($map->{$name});
             return OK;
         }
         shift @parts;
     }
-    $hd->mime_type($custom_map->{'#default'} || $default_types{'#default'});
+    $hd->mime_type($map->{'#default'});
     return DECLINED;
 }

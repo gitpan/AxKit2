@@ -23,13 +23,13 @@ use base qw(AxKit2::Transformer);
 use XML::LibXML;
 use XML::LibXSLT;
 use AxKit2::Constants;
+use AxKit2::Utils qw(bytelength);
 
 my $parser = XML::LibXML->new();
 my $xslt = XML::LibXSLT->new();
 
 sub new {
     my $class = shift;
-    
     my $stylesheet = shift;
     
     my @params = @_;
@@ -80,7 +80,7 @@ sub output {
     my $enc = $stylesheet->output_encoding;
     my $out = $stylesheet->output_string($dom);
 
-    $client->headers_out->header('Content-Length', length($out));
+    $client->headers_out->header('Content-Length', bytelength($out));
     $client->headers_out->header('Content-Type', "$ct; charset=$enc");
     $client->send_http_headers;
     $client->write($out);

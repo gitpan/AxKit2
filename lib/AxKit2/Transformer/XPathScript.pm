@@ -20,6 +20,7 @@ use warnings;
 
 use AxKit2::Constants;
 use XML::XPathScript;
+use AxKit2::Utils qw(bytelength);
 
 use base qw(AxKit2::Transformer);
 
@@ -87,7 +88,7 @@ sub output {
     # XPathScript_OutputStyle trumps all
     $ct = $self->{output_style} if $self->{output_style};
 
-    $client->headers_out->header('Content-Length', length($out));
+    $client->headers_out->header('Content-Length', bytelength($out));
     $client->headers_out->header( 'Content-Type' => $ct );
     $client->send_http_headers;
     $client->write($out);

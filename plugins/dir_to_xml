@@ -53,31 +53,30 @@ accented filenames or filenames in non-ascii encodings. In order to cope with
 these sorts of filenames you need to specify an encoding. The filenames will
 then be converted to unicode using the perl Encode module.
 
+By default, filenames are accepted as either UTF-8 or ISO-8859-15, autodetecting
+the character set of each filename. This makes transition to UTF-8 filenames rather
+painless.
+
+A warning on encodings: On some platforms,you may get different byte sequences for
+the same character. For example, Perl on MacOS X seems to like
+[base-letter+combining-char] more than [combined character], while on other systems
+it doesn't care. This doesn't affect XSLT or other truly XML aware processors but may
+hit you when you process the resulting XML with regexes or similar.
+
 =cut
 
 use File::Spec::Functions qw(catfile);
 use Encode;
+use utf8;
 
-sub init {
-    my $self = shift;
-    
-    $self->register_config('DirExternalEncoding', sub { $self->ext_encoding(@_) });
-}
-
-sub ext_encoding {
-    my ($self, $conf) = (shift, shift);
-    
-    my $key = $self->plugin_name . '::external_encoding';
-    @_ and $conf->notes($key, shift);
-    $conf->notes($key);
-}
+sub conf_DirExternalEncoding;
 
 sub hook_xmlresponse {
     my ($self, $input) = @_;
     my $dir = $self->client->headers_in->filename;
     return DECLINED unless -d $dir;
     
-    my $enc = $self->ext_encoding($self->config) || 'ISO-8859-1';
+    my $enc = $self->config('DirExternalEncoding') || 'ISO-8859-15';
     
     opendir(DIR, $dir) || die "opendir($dir): $!";
     
@@ -113,5 +112,7 @@ sub hook_xmlresponse {
 sub _to_utf8 {
     my ($enc, $line) = @_;
     # NB: We croak because it's useless returning a dir we can't convert
+    my $res = eval { decode_utf8($line, Encode::FB_CROAK) };
+    return $res unless $@;
     return Encode::decode($enc, $line, Encode::FB_CROAK);
 }

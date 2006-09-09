@@ -20,6 +20,9 @@ use warnings;
 
 use AxKit2::Plugin;
 use AxKit2::Constants;
+use AxKit2::Processor;
+use AxKit2::Utils qw(xml_escape);
+use Carp qw(croak);
 
 our %PLUGINS;
 
@@ -97,193 +100,393 @@ sub run_hooks {
     
     my $conf = $self->config();
     
-    my @r;
-  MAINLOOP:
+    if (my $cached_hooks = $conf->cached_hooks($hook)) {
+        return $self->_run_hooks($conf, $hook, [@_], $cached_hooks, 0);
+    }
+    
+    my @hooks;
     for my $plugin ($conf->plugins) {
-        my $plug = plugin_instance($plugin) || next;
-        for my $h ($plug->hooks($hook)) {
-            $self->log(LOGDEBUG, "$plugin running hook $hook") unless $hook eq 'logging';
-            eval { @r = $plug->$h($self, $conf, @_) };
+        my $plug = $PLUGINS{$plugin} || next;
+        push @hooks, map { [$plugin, $plug, $_] } $plug->hooks($hook);
+    }
+    
+    $conf->cached_hooks($hook, \@hooks);
+    $self->_run_hooks($conf, $hook, [@_], \@hooks, 0);
+}
+
+sub finish_continuation {
+    my ($self) = @_;
+    my $todo = $self->{continuation} || croak "No continuation in progress";
+    $self->continue_read();
+    $self->{continuation} = undef;
+    my $hook = shift @$todo;
+    my $args = shift @$todo;
+    my $pos  = shift @$todo;
+    my $conf = $self->config;
+    my $hooks = $conf->cached_hooks($hook);
+    $self->_run_hooks($conf, $hook, $args, $hooks, $pos+1);
+}
+
+sub _run_hooks {
+    my $self = shift;
+    my ($conf, $hook, $args, $hooks, $pos) = @_;
+    
+    my $last_hook = $#$hooks;
+    
+    my @r;
+    if ($pos <= $last_hook) {
+        for my $idx ($pos .. $last_hook) {
+            my $info = $hooks->[$idx];
+            my ($plugin, $plug, $h) = @$info;
+            # $self->log(LOGDEBUG, "$plugin ($idx) running hook $hook") unless $hook eq 'logging';
+            eval { @r = $plug->$h($self, $conf, @$args) };
             if ($@) {
                 my $err = $@;
                 $self->log(LOGERROR, "FATAL PLUGIN ERROR: $err");
-                return SERVER_ERROR, $err;
+                $self->hook_error($err) unless $hook eq 'error';
+                return DONE;
             }
             next unless @r;
-            last MAINLOOP unless $r[0] == DECLINED;
+            if (!defined $r[0]) {
+                print "r0 not defined in hook $hook\[$idx]\n";
+            }
+            if ($r[0] == CONTINUATION) {
+                $self->pause_read();
+                $self->{continuation} = [$hook, $args, $idx];
+            }
+            last unless $r[0] == DECLINED;
         }
     }
+    
     $r[0] = DECLINED if not defined $r[0];
+    if ($r[0] != CONTINUATION) {
+        my $responder = "hook_${hook}_end";
+        if (my $meth = $self->can($responder)) {
+            return $meth->($self, $r[0], $r[1], @$args);
+        }
+    }
     return @r;
 }
 
 sub log {
     my $self = shift;
-    my ($ret, $out) = $self->run_hooks('logging', @_);
+    $self->run_hooks('logging', @_);
 }
 
 sub hook_connect {
     my $self = shift;
-    my ($ret, $out) = $self->run_hooks('connect');
-    if ($ret == DECLINED) {
-        return 1;
-    }
-    else {
-        # TODO: Output some stuff...
-        return;
-    }
+    $self->run_hooks('connect');
 }
 
-sub hook_uri_to_file {
+sub hook_connect_end {
     my $self = shift;
-    my ($ret, $out) = $self->run_hooks('uri_translation', @_);
+    my ($ret, $out) = @_;
     if ($ret == DECLINED || $ret == OK) {
-        return 1;
+        # success
+        $self->run_hooks('pre_request');
     }
     else {
-        # TODO: output error stuff?
+        $self->close("connect hook closing");
         return;
     }
 }
 
-sub hook_access_control {
-    1;
+sub hook_pre_request {
+    my $self = shift;
+    $self->run_hooks('pre_request');
 }
 
-sub hook_authentication {
-    1;
+sub hook_pre_request_end {
+    my $self = shift;
+    my ($ret, $out) = @_;
+    # TODO: Manage $ret
+    return;
 }
 
-sub hook_authorization {
-    1;
+sub hook_body_data {
+    my $self = shift;
+    $self->run_hooks('body_data', @_);
 }
 
-sub hook_fixup {
-    1;
+sub hook_body_data_end {
+    my ($self, $ret) = @_;
+    if ($ret == DECLINED || $ret == DONE) {
+        return $self->process_request();
+    }
+    elsif ($ret == OK) {
+        return 1;
+    }
+    else {
+        $self->default_error_out($ret);
+    }
+}
+
+sub hook_write_body_data {
+    my $self = shift;
+    my ($ret) = $self->run_hooks('write_body_data');
+    if ($ret == CONTINUATION) {
+        die "Continuations not supported on write_body_data";
+    }
+    elsif ($ret == DECLINED || $ret == DONE) {
+        return;
+    }
+    elsif ($ret == OK) {
+        return 1;
+    }
+    else {
+        $self->default_error_out($ret);
+    }
+}
+
+sub hook_post_read_request {
+    my $self = shift;
+    $self->run_hooks('post_read_request', @_);
+}
+
+sub hook_post_read_request_end {
+    my ($self, $ret, $out, $hd) = @_;
+    if ($ret == DECLINED || $ret == OK) {
+        if ($hd->request_method =~ /GET|HEAD/) {
+            return $self->process_request;
+        }
+        return;
+    }
+    elsif ($ret == DONE) {
+        $self->write(sub { $self->hook_response_sent($self->headers_out->response_code) });
+    }
+    else {
+        $self->default_error_out($ret);
+    }
+}
+
+sub hook_uri_translation {
+    my ($self, $hd, $uri) = @_;
+    $self->run_hooks('uri_translation', $hd, $uri);
+}
+
+sub hook_uri_translation_end {
+    my ($self, $ret, $out, $hd) = @_;
+    if ($ret == DECLINED || $ret == OK) {
+        return $self->run_hooks('mime_map', $hd, $hd->filename);
+    }
+    elsif ($ret == DONE) {
+        $self->write(sub { $self->hook_response_sent($self->headers_out->response_code) });
+    }
+    else {
+        $self->default_error_out($ret);
+    }
+}
+
+sub hook_mime_map_end {
+    my ($self, $ret, $out, $hd) = @_;
+    if ($ret == DECLINED || $ret == OK) {
+        return $self->run_hooks('access_control', $hd);
+    }
+    elsif ($ret == DONE) {
+        $self->write(sub { $self->hook_response_sent($self->headers_out->response_code) });
+    }
+    else {
+        $self->default_error_out($ret);
+    }
+}
+
+sub hook_access_control_end {
+    my ($self, $ret, $out, $hd) = @_;
+    if ($ret == DECLINED || $ret == OK) {
+        return $self->run_hooks('authentication', $hd);
+    }
+    elsif ($ret == DONE) {
+        $self->write(sub { $self->hook_response_sent($self->headers_out->response_code) });
+    }
+    else {
+        $self->default_error_out($ret);
+    }
+}
+
+sub hook_authentication_end {
+    my ($self, $ret, $out, $hd) = @_;
+    if ($ret == DECLINED || $ret == OK) {
+        return $self->run_hooks('authorization', $hd);
+    }
+    elsif ($ret == DONE) {
+        $self->write(sub { $self->hook_response_sent($self->headers_out->response_code) });
+    }
+    else {
+        $self->default_error_out($ret);
+    }
+}
+
+sub hook_authorization_end {
+    my ($self, $ret, $out, $hd) = @_;
+    if ($ret == DECLINED || $ret == OK) {
+        return $self->run_hooks('fixup', $hd);
+    }
+    elsif ($ret == DONE) {
+        $self->write(sub { $self->hook_response_sent($self->headers_out->response_code) });
+    }
+    else {
+        $self->default_error_out($ret);
+    }
+}
+
+sub hook_fixup_end {
+    my ($self, $ret, $out, $hd) = @_;
+    if ($ret == DECLINED || $ret == OK) {
+        return $self->run_hooks(
+                            'xmlresponse', 
+                            AxKit2::Processor->new($self, $hd->filename),
+                            $hd);
+    }
+    elsif ($ret == DONE) {
+        $self->write(sub { $self->hook_response_sent($self->headers_out->response_code) });
+    }
+    else {
+        $self->default_error_out($ret);
+    }
+}
+
+sub hook_xmlresponse_end {
+    my ($self, $ret, $out, $input, $hd) = @_;
+    if ($ret == DECLINED) {
+        return $self->run_hooks('response', $hd);
+    }
+    elsif ($ret == DONE) {
+        $self->write(sub { $self->hook_response_sent($self->headers_out->response_code) });
+    }
+    elsif ($ret == OK) {
+        $out->output() if $out;
+        $self->write(sub { $self->http_response_sent($self->headers_out->response_code) });
+    }
+    else {
+        $self->default_error_out($ret);
+    }
+}
+
+sub hook_response_end {
+    my ($self, $ret, $out, $hd) = @_;
+    if ($ret == DECLINED) {
+        $self->default_error_out(NOT_FOUND);
+    }
+    elsif ($ret == OK || $ret == DONE) {
+        $self->write(sub { $self->hook_response_sent($self->headers_out->response_code) });
+    }
+    else {
+        $self->default_error_out($ret);
+    }
+    
+}
+
+sub hook_response_sent {
+    my $self = shift;
+    $self->run_hooks('response_sent', @_);
+}
+
+sub hook_response_sent_end {
+    my ($self, $ret, $out, $code) = @_;
+    if ($ret == DONE) {
+        $self->close("plugin decided not to keep connection open");
+    }
+    elsif ($ret == DECLINED || $ret == OK) {
+        return $self->http_response_sent;
+    }
+    else {
+        $self->default_error_out($ret);
+    }
 }
 
 sub hook_error {
     my $self = shift;
     $self->headers_out->code(SERVER_ERROR);
-    my ($ret) = $self->run_hooks('error', @_);
-    if ($ret != OK) {
-        $self->headers_out->header('Content-Type' => 'text/html; charset=UTF-8');
-        $self->send_http_headers;
-        $self->write(<<EOT);
-<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
-<HTML><HEAD>
-<TITLE>500 Internal Server Error</TITLE>
-</HEAD><BODY>
-<H1>Internal Server Error</H1>
-The server encountered an internal error or
-misconfiguration and was unable to complete
-your request.<P>
-More information about this error may be available
-in the server error log.<P>
-<HR>
-</BODY></HTML>
-EOT
+    $self->run_hooks('error', @_);
+}
+
+sub hook_error_end {
+    my ($self, $ret) = @_;
+    if ($ret == DECLINED) {
+        $self->default_error_out(SERVER_ERROR);
     }
-    else {
+    elsif ($ret == OK || $ret == DONE) {
         # we assume some hook handled the error
     }
+    else {
+        $self->default_error_out($ret);
+    }
 }
 
-sub hook_xmlresponse {
-    my $self = shift;
-    my ($ret, $out) = $self->run_hooks('xmlresponse', @_);
-    if ($ret == DECLINED) {
-        return 0;
+# stolen shamelessly from httpd-2.2.2/modules/http/http_protocol.c
+sub default_error_out {
+    my ($self, $code, $extras) = @_;
+    $extras = '' unless defined $extras;
+    
+    $self->initialize_response;
+    
+    $self->headers_out->code($code);
+    
+    if ($code == NOT_MODIFIED) {
+        $self->send_http_headers;
+        $self->write(sub { $self->hook_response_sent($self->headers_out->response_code) });
+        # The 304 response MUST NOT contain a message-body
+        return;
     }
-    elsif ($ret == OK) {
-        $out->output($self) if $out;
-        return 1; # stop
+    
+    $self->headers_out->header('Content-Type', 'text/html');
+    $self->headers_out->header('Connection', 'close');
+    $self->send_http_headers;
+    
+    $self->write("<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\">\n" .
+                 "<HTML><HEAD>\n" .
+                 "<TITLE>$code ".$self->headers_out->http_code_english."</TITLE>\n" .
+                 "</HEAD></BODY>\n" .
+                 "<H1>".$self->headers_out->http_code_english."</H1>\n"
+                 );
+    
+    if ($code == REDIRECT) {
+        my $new_uri = $self->headers_out->header('Location')
+            || die "No Location header set for REDIRECT";
+        $self->write('The document has moved <A HREF="' . 
+                        xml_escape($new_uri) . "\">here</A>.<P>\n");
     }
-    elsif ($ret == SERVER_ERROR) {
-        $self->hook_error($out);
-        return 1; # stop
+    elsif ($code == BAD_REQUEST) {
+        $self->write("<p>Your browser sent a request that this server could not understand.<br />\n" .
+                     xml_escape($extras)."</p>\n");
+    }
+    elsif ($code == UNAUTHORIZED) {
+        $self->write("<p>This server could not verify that you\n" .
+                       "are authorized to access the document\n" .
+                       "requested.  Either you supplied the wrong\n" .
+                       "credentials (e.g., bad password), or your\n" .
+                       "browser doesn't understand how to supply\n" .
+                       "the credentials required.</p>\n");
+    }
+    elsif ($code == FORBIDDEN) {
+        $self->write("<p>You don't have permission to access " . 
+                     xml_escape($self->headers_in->uri) .
+                     "\non this server.</p>\n");
+    }
+    elsif ($code == NOT_FOUND) {
+        $self->write("<p>The requested URL " . 
+                     xml_escape($self->headers_in->uri) .
+                     " was not found on this server.</p>\n");
+    }
+    elsif ($code == SERVICE_UNAVAILABLE) {
+        $self->write("<p>The server is temporarily unable to service your\n" .
+                     "request due to maintenance downtime or capacity\n" .
+                     "problems. Please try again later.</p>\n");
     }
     else {
-        # TODO: handle errors
+        $self->write("The server encountered an internal error or \n" .
+                     "misconfiguration and was unable to complete \n" .
+                     "your request.<p>\n" .
+                     "More information about this error may be available\n" .
+                     "in the server error log.<p>\n");
     }
-}
-
-sub hook_response {
-    my $self = shift;
-    my ($ret, $out) = $self->run_hooks('response', @_);
-    if ($ret == DECLINED) {
-        $self->headers_out->code(NOT_FOUND);
-        $self->headers_out->header('Content-Type' => 'text/html; charset=UTF-8');
-        $self->send_http_headers;
-        my $uri = $self->headers_in->uri;
-        $self->write(<<EOT);
-<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
-<HTML><HEAD>
-<TITLE>404 Not Found</TITLE>
-</HEAD><BODY>
-<H1>Not Found</H1>
-The requested URL $uri was not found on this server.<P>
+    
+    $self->write(<<EOT);
 <HR>
 </BODY></HTML>
 EOT
-        return;
-    }
-    elsif ($ret == OK) {
-        return 1;
-    }
-    elsif ($ret == SERVER_ERROR) {
-        $self->hook_error($out);
-        return 1; # stop
-    }
-    else {
-        # TODO: output error stuff?
-    }
-}
 
-sub hook_body_data {
-    my $self = shift;
-    my ($ret, $out) = $self->run_hooks('body_data', @_);
-    if ($ret == DECLINED) {
-        return;
-    }
-    if ($ret == DONE) {
-        $self->process_request();
-        return;
-    }
-    elsif ($ret == OK) {
-        return 1;
-    }
-    else {
-        # TODO: output error stuff?
-    }
-}
-
-sub hook_mime_map {
-    my $self = shift;
-    my ($ret, $out) = $self->run_hooks('mime_map', @_);
-    if ($ret == DECLINED) {
-        return 1;
-    }
-    elsif ($ret == OK) {
-        return 1;
-    }
-    else {
-        # TODO: output error stuff?
-    }
-}
-
-sub hook_response_sent {
-    my $self = shift;
-    my ($ret, $out) = $self->run_hooks('response_sent', @_);
-    if ($ret == DONE) {
-        return 1;
-    }
-    elsif ($ret == DECLINED || $ret == OK) {
-        return;
-    }
-    else {
-        # TODO: errors?
-    }
+    $self->write(sub { $self->hook_response_sent($self->headers_out->response_code) });
 }
 
 1;

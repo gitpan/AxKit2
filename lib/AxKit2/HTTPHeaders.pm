@@ -13,9 +13,23 @@
 # limitations under the License.
 #
 
+# Some code is Copyright 2005, Six Apart, Ltd, used with permission, and licensed
+# under the same terms as Perl itself.
+
 package AxKit2::HTTPHeaders;
 
-# HTTP Header parser. Lots stolen/borrowed from Perlbal :-)
+=head1 NAME
+
+AxKit2::HTTPHeaders - HTTP Request and Response header class
+
+=head1 DESCRIPTION
+
+This class parses and encapsulates HTTP headers, including the request/response
+line (e.g. I<GET / HTTP/1.0>).
+
+=head1 API
+
+=cut
 
 use strict;
 use warnings;
@@ -43,12 +57,14 @@ use fields (
             'responseLine', # first line of HTTP response (if response)
             'requestLine',  # first line of HTTP request (if request)
             'parsed_cookies',  # parsed cookie data
+            'lame'          # HTTP/0.9
             );
 
 our $HTTPCode = {
     200 => 'OK',
     204 => 'No Content',
     206 => 'Partial Content',
+    302 => 'Found',
     304 => 'Not Modified',
     400 => 'Bad request',
     403 => 'Forbidden',
@@ -59,11 +75,19 @@ our $HTTPCode = {
     503 => 'Service Unavailable',
 };
 
+=head2 C<< CLASS->new( STRREF, IS_RESPONSE, IS_LAME ) >>
+
+Construct a new header object from the given C<STRREF>. Assumes the header is
+a response header if C<IS_RESPONSE> is set. Assumes C<HTTP/0.9> if C<IS_LAME> is
+set.
+
+=cut
+
 sub new {
     my AxKit2::HTTPHeaders $self = shift;
     $self = fields::new($self) unless ref $self;
 
-    my ($hstr_ref, $is_response) = @_;
+    my ($hstr_ref, $is_response, $lame) = @_;
     # hstr: headers as a string ref
 
     my $absoluteURIHost = undef;
@@ -78,6 +102,7 @@ sub new {
     $self->{method}     = undef;
     $self->{uri}        = undef;
     $self->{type}       = ($is_response ? "res" : "req");
+    $self->{lame}       = $lame;
 
     # check request line
     if ($is_response) {
@@ -96,6 +121,17 @@ sub new {
         }
         $self->{ver} = "$ver_ma.$ver_mi";
         $self->{vernum} = $ver_ma*1000 + $ver_mi;
+    }
+    elsif ($lame) {
+        $self->{requestLine} = (shift @lines) || "";
+        $self->{requestLine} =~ /^GET ([^ ]+)$/m
+            || die "Strange program interaction - not a lame request at all";
+        
+        $self->{method} = 'GET';
+        $self->{uri} = $1;
+        
+        $self->{ver} = "0.9";
+        $self->{vernum} = 9;
     }
     else {
         $self->{requestLine} = (shift @lines) || "";
@@ -172,6 +208,15 @@ sub new {
     return $self;
 }
 
+
+=head2 C<< CLASS->new_response( [ CODE ] ) >>
+
+Create a new response header with response code C<CODE> (default: 200 "OK").
+
+Assumes response is HTTP/1.0.
+
+=cut
+
 sub new_response {
     my AxKit2::HTTPHeaders $self = shift;
     $self = fields::new($self) unless ref $self;
@@ -191,6 +236,12 @@ sub new_response {
     return $self;
 }
 
+=head2 C<< $obj->parse_uri >>
+
+Parse the request URI for querystring parameters.
+
+=cut
+
 sub parse_uri {
     my AxKit2::HTTPHeaders $self = shift;
     my ($path, $qs) = split(/\?/, $self->{uri});
@@ -207,6 +258,12 @@ sub parse_uri {
     }
 }
 
+=head2 C<< $obj->add_param( KEY, VALUE ) >>
+
+Add a new param (see C<< $obj->param >> below).
+
+=cut
+
 sub add_param {
     my AxKit2::HTTPHeaders $self = shift;
     my ($key, $value) = @_;
@@ -215,7 +272,16 @@ sub add_param {
     push @{ $self->{params}{$key} }, $value;
 }
 
-# returns all params for a key in LIST context, or the last param for a key in SCALAR
+
+=head2 C<< $obj->param( [ KEY ] ) >>
+
+Returns all params for C<KEY> in LIST context, or the last param for C<KEY> in
+SCALAR context.
+
+Returns a list of current params if C<KEY> is not supplied.
+
+=cut
+
 sub param {
     my AxKit2::HTTPHeaders $self = shift;
     my $key = shift;
@@ -223,6 +289,13 @@ sub param {
     return unless exists $self->{params}{$key};
     return wantarray ? @{ $self->{params}{$key} } : $self->{params}{$key}[-1];
 }
+
+=head2 C<< $obj->http_code_english( [ CODE ] ) >>
+
+Returns the english equivalent for HTTP response code C<CODE>. If code is not
+supplied uses the current I<response> code (not valid for request headers).
+
+=cut
 
 sub http_code_english {
     my AxKit2::HTTPHeaders $self = shift;
@@ -248,6 +321,12 @@ sub _codetext {
     return $self->http_code_english;
 }
 
+=head2 C<< $obj->code( CODE [, TEXT] ) >>
+
+Sets the response code to C<CODE> with optional C<TEXT>.
+
+=cut
+
 sub code {
     my AxKit2::HTTPHeaders $self = shift;
     my ($code, $text) = @_;
@@ -260,15 +339,36 @@ sub code {
     }
 }
 
+=head2 C<< $obj->response_code >>
+
+Gets the response code.
+
+=cut
+
 sub response_code {
     my AxKit2::HTTPHeaders $self = $_[0];
     return $self->{code};
 }
 
+=head2 C<< $obj->request_method >>
+
+Gets the request method (e.g. "GET", "POST", etc).
+
+=cut
+
 sub request_method {
     my AxKit2::HTTPHeaders $self = shift;
     return $self->{method};
 }
+
+
+=head2 C<< $obj->request_uri >>
+
+Gets the request URI. Returns the full URI inclusive of query string.
+
+Also callable as C<< $obj->uri >>.
+
+=cut
 
 sub request_uri {
     my AxKit2::HTTPHeaders $self = shift;
@@ -278,9 +378,10 @@ sub request_uri {
 
 *uri = \&request_uri;
 
+# Parse the Cookie header.
 sub parse_cookies {
     my AxKit2::HTTPHeaders $self = shift;
-    my $raw_cookies = $self->header('Cookie');
+    my $raw_cookies = $self->header('Cookie') || '';
     $self->{parsed_cookies} = {};
     foreach (split(/;\s+/, $raw_cookies)) {
         my ($key, $value) = split("=", $_, 2);
@@ -298,10 +399,27 @@ sub parse_cookies {
 #                    |       "Secure"
 #                    |       "Version" "=" 1*DIGIT
 
-# my @vals = $hd_in->cookie($name);             # fetch a cookie values
-# $hd_out->cookie($name, $value);               # set a cookie
-# $hd_out->cookie($name, $value, path => "/");  # cookie with params
-# $hd_out->cookie($name, \@values, domain => "example.com");  # multivalue
+=head2 C<< $obj->cookie( NAME ) >>
+
+Returns a list of values for the given cookie C<NAME> in LIST context, or the
+last set cookie for the given cookie C<NAME> in scalar context. Only works on request
+headers. 
+
+=head2 C<< $obj->cookie( NAME, VALUE [, PARAMS] ) >>
+
+Set the cookie called C<NAME> with value C<VALUE>.
+
+If value is an arrayref sets a multi-valued cookie.
+
+Optional params are key-value pairs as per the cookie spec, e.g.:
+
+  $header->cookie( foo => "bar", path => "/", secure => 1 );
+
+Expiration via C<expires> is not parsed and does not take formats such as "+1d".
+It is suggested to use C<max-age> instead (as per RFC 2109) which is a timeout in
+seconds from the current time.
+
+=cut
 sub cookie {
     my AxKit2::HTTPHeaders $self = shift;
     my $name = shift;
@@ -330,38 +448,71 @@ sub cookie {
     die "Cannot extract cookies from the response"
         if $self->{type} eq 'res';
     $self->parse_cookies unless $self->{parsed_cookies};
-    return @{$self->{parsed_cookies}{$name}} if exists $self->{parsed_cookies}{$name};
+    if (exists $self->{parsed_cookies}{$name}) {
+        return wantarray ? @{$self->{parsed_cookies}{$name}} : $self->{parsed_cookies}{$name}[-1];
+    }
 }
 
+=head2 C<< $obj->filename( [ STRING ] ) >>
+
+Gets/Sets the request filename value.
+
+=cut
 sub filename {
     my AxKit2::HTTPHeaders $self = shift;
     @_ and $self->{file} = shift;
     return $self->{file};
 }
 
+=head2 C<< $obj->mime_type( [ STRING ] ) >>
+
+Gets/Sets the request MIME type.
+
+=cut
 sub mime_type {
     my AxKit2::HTTPHeaders $self = shift;
     @_ and $self->{mime_type} = shift;
     return $self->{mime_type};
 }
 
+=head2 C<< $obj->path_info( [ STRING ] ) >>
+
+Gets/Sets the request path-info value.
+
+=cut
 sub path_info {
     my AxKit2::HTTPHeaders $self = shift;
     @_ and $self->{path_info} = shift;
     return $self->{path_info};
 }
 
+=head2 C<< $obj->version_number( [ VER ] ) >>
+
+Gets/Sets the header version number. Uses the form C<MAJOR * 1000 + MINOR>, so
+HTTP/1.0 will return C<1000> and HTTP/0.9 will return C<9>.
+
+=cut
 sub version_number {
     my AxKit2::HTTPHeaders $self = shift;
     @_ and $self->{vernum} = shift;
     $self->{vernum};
 }
 
+=head2 C<< $obj->request_line >>
+
+Returns the very first line of the request as seen.
+
+=cut
 sub request_line {
     my AxKit2::HTTPHeaders $self = shift;
     $self->{requestLine};
 }
 
+=head2 C<< $obj->header( KEY [, VALUE ] ) >>
+
+Get/Set the value for a given header.
+
+=cut
 sub header {
     my AxKit2::HTTPHeaders $self = shift;
     my $key = shift;
@@ -378,6 +529,21 @@ sub header {
     return $self->{headers}{$key} = shift;
 }
 
+=head2 C<< $obj->lame_request >>
+
+Returns true if the request was a HTTP/0.9 request.
+
+=cut
+sub lame_request {
+    my AxKit2::HTTPHeaders $self = shift;
+    return $self->{lame};
+}
+
+=head2 C<< $obj->to_string_ref >>
+
+Returns a reference to a string representing the headers in full.
+
+=cut
 sub to_string_ref {
     my AxKit2::HTTPHeaders $self = shift;
     my $st = join("\r\n",
@@ -389,6 +555,11 @@ sub to_string_ref {
     return \$st;
 }
 
+=head2 C<< $obj->clone >>
+
+Clone the current header object. Returns a new C<AxKit2::HTTPHeaders> object.
+
+=cut
 sub clone {
     my AxKit2::HTTPHeaders $self = shift;
     my $new = fields::new($self);
@@ -396,15 +567,18 @@ sub clone {
         $new->{$_} = $self->{$_};
     }
 
-    # mark this object as constructed
-    Perlbal::objctor($new, $new->{type});
-
+    # TODO - parse cookies and things
     $new->{headers} = { %{$self->{headers}} };
     $new->{origcase} = { %{$self->{origcase}} };
     $new->{hdorder} = [ @{$self->{hdorder}} ];
     return $new;
 }
 
+=head2 C<< $obj->set_version( VER ) >>
+
+Set the HTTP version using the C<N.N> format.
+
+=cut
 sub set_version {
     my AxKit2::HTTPHeaders $self = shift;
     my $ver = shift;
@@ -423,8 +597,12 @@ sub set_version {
     return $self;
 }
 
-# using all available information, attempt to determine the content length of
-# the message body being sent to us.
+=head2 C<< $obj->content_length >>
+
+Using all available information, attempt to determine the content length of
+the message body being sent to us.
+
+=cut
 sub content_length {
     my AxKit2::HTTPHeaders $self = shift;
 
@@ -451,14 +629,18 @@ sub content_length {
     return undef;
 }
 
-# answers the question: "should a response to this person specify keep-alive,
-# given the request (self) and the backend response?"  this is used in proxy
-# mode to determine based on the client's request and the backend's response
-# whether or not the response from the proxy (us) should do keep-alive.
-#
-# FIXME: this is called too often (especially with service selector),
-# and should be redesigned to be simpler, and/or cached on the
-# connection.  there's too much duplication with res_keep_alive.
+=head2 C<< $obj->req_keep_alive( RESPONSE_HEADERS ) >>
+
+Given C<$obj> is the request headers, answers the question: "should a response
+to this person specify keep-alive, given the request and the given response?"
+
+This is used in proxy mode to determine based on the client's request and the
+backend's response whether or not the response from the proxy (us) should do
+keep-alive.
+
+For normal responses (should a response be kept alive) see C<res_keep_alive>.
+
+=cut
 sub req_keep_alive {
     my AxKit2::HTTPHeaders $self = $_[0];
     my AxKit2::HTTPHeaders $res = $_[1] or Carp::confess("ASSERT: No response headers given");
@@ -488,19 +670,26 @@ sub req_keep_alive {
     return 0;
 }
 
-# if an options response from a backend looks like it can do keep-alive.
+=head2 C<< $obj->res_keep_alive_options >>
+
+Determine if an options response from a backend looks like it can do keep-alive.
+
+=cut
 sub res_keep_alive_options {
     my AxKit2::HTTPHeaders $self = $_[0];
     return $self->res_keep_alive(undef, 1);
 }
 
-# answers the question: "is the backend expected to stay open?"  this
-# is a combination of the request we sent to it and the response they
-# sent...
+=head2 C<< $obj->res_keep_alive( REQUEST_HEADERS ) >>
 
-# FIXME: this is called too often (especially with service selector),
-# and should be redesigned to be simpler, and/or cached on the
-# connection.  there's too much duplication with req_keep_alive.
+Given C<$obj> is the response headers, answers the question: "is the backend
+expected to stay open?"  this is a combination of the request we sent to it and
+the response they sent...
+
+You don't normally need to call this - it is automatically performed by the
+backend.
+
+=cut
 sub res_keep_alive {
     my AxKit2::HTTPHeaders $self = $_[0];
     my AxKit2::HTTPHeaders $req = $_[1];
@@ -538,10 +727,23 @@ sub res_keep_alive {
     return 1;
 }
 
-# returns (status, range_start, range_end) when given a size
-# status = 200 - invalid or non-existent range header.  serve normally.
-# status = 206 - parsable range is good.  serve partial content.
-# status = 416 - Range is unsatisfiable
+=head2 C<< $obj->range( SIZE ) >>
+
+Given a size, returns C<STATUS, RANGE_START, RANGE_END>.
+
+Status will be one of:
+
+=over 4
+
+=item * 200 - Invalid or non-existant range header. Serve normally.
+
+=item * 206 - Parsable range is good. Serve partial content.
+
+=item * 416 - Range is unsatisfiable.
+
+=back
+
+=cut
 sub range {
     my AxKit2::HTTPHeaders $self = $_[0];
     my $size = $_[1];

@@ -17,12 +17,17 @@ package AxKit2;
 
 use strict;
 use warnings;
+no warnings 'deprecated';
+use Danga::Socket;
 use AxKit2::Client;
 use AxKit2::Server;
 use AxKit2::Config;
 use AxKit2::Console;
+use AxKit2::Constants qw(LOGINFO);
 
-our $VERSION = '1.0';
+use constant AIO_AVAILABLE => eval { require IO::AIO };
+
+our $VERSION = '1.1';
 
 sub run {
     my $class       = shift;
@@ -40,6 +45,12 @@ sub run {
         AxKit2::Server->create($server);
     }
     
+    if (AIO_AVAILABLE) {
+        AxKit2::Client->log(LOGINFO, "Adding AIO support");
+        Danga::Socket->AddOtherFds (IO::AIO::poll_fileno() =>
+                                    \&IO::AIO::poll_cb);
+    }
+
     # print $_, "\n" for sort keys %INC;
     
     Danga::Socket->EventLoop();
@@ -131,7 +142,7 @@ See L<plugins::uri_to_file>.
 
 =item * B<logging/warn> - Logging output to STDERR via warn().
 
-See L<plugins::logging/warn>.
+See L<plugins::logging::warn>.
 
 =back
 

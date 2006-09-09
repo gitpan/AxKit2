@@ -53,20 +53,27 @@ sub hook_xmlresponse {
         my $module = $uri;
         $uri = "lib/$uri" unless $uri =~ /plugins::/;
         $uri =~ s/::/\//g;
-        $uri .= '.pm' if -e "${uri}.pm";
-        $uri .= '.pod' if -e "${uri}.pod";
-        # TODO: fix this huge security hole?
-        $uri = `perldoc -l '$module'`;
+        if    (-e "${uri}.pm") { $uri .= '.pm' }
+        elsif (-e "${uri}.pod") { $uri .= '.pod' }
+        else {
+            die "Invalid module name: $module" if $module =~ /[^\w:]/;
+            chomp($uri = `perldoc -l '$module'`);
+        }
+        if ($uri !~ /\//) {
+            return NOT_FOUND;
+        }
     }
     else {
         # Ignore?
-        die "Unsupported URL: $uri";
+        # die "Unsupported URL: $uri";
+        return NOT_FOUND;
     }
     
     my $builder = XML::LibXML::SAX::Builder->new();
     my $p = Pod::SAX->new( Handler => $builder );
     
-    $p->parse_file($uri);
+    open(my $fh, $uri) || die "Failed to open($uri): $!";
+    $p->parse_file($fh);
     
     my $doc = $builder->result();
     

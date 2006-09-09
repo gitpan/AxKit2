@@ -20,22 +20,28 @@ use warnings;
 
 use base 'Exporter';
 
-our @EXPORT_OK = qw(uri_encode uri_decode http_date xml_escape);
+our @EXPORT_OK = qw(
+    uri_encode
+    uri_decode
+    http_date
+    xml_escape
+    bytelength
+    );
 
 sub uri_encode {
     my $uri = shift;
 
     # TODO: Support Unicode?
-    $uri =~ s/([^-.\w ])/sprintf('%%%02X', ord $1)/ge;
+    $uri =~ s/([^-\/.\w ])/sprintf('%%%02X', ord $1)/ge;
     $uri =~ tr/ /+/;
 
     return $uri;
 }
 
 sub uri_decode {
-	my $uri = shift;
-	return '' unless defined $uri;
-	$uri =~ s/\+/ /g;
+    my $uri = shift;
+    return '' unless defined $uri;
+    $uri =~ s/\+/ /g;
     $uri =~ s/
         %                      # encoded data marker
         (?:                    # followed by either
@@ -46,7 +52,7 @@ sub uri_decode {
         /
         defined($1) ? chr hex($1) : utf8_chr(hex($2))
         /gex;
-	return $uri;
+    return $uri;
 }
 
 # borrowed from CGI::Util which I think borrowed it from XML::DOM...
@@ -107,6 +113,11 @@ sub xml_escape {
     $text =~ s/"/&quot;/g;
     $text =~ s/'/&apos;/g;
     return $text;
+}
+
+sub bytelength {
+    use bytes;
+    return length($_[0]);
 }
 
 1;

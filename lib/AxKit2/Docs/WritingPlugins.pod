@@ -195,36 +195,14 @@ the base class methods.
 
 =back
 
+To add configuration directives we just add sub definitions starting with "conf_":
 
+  sub conf_XSLTStyle;
 
-The C<init()> method allows us to setup any plugin-wide defaults such as
-database connections. To add configuration directives we just call the
-C<register_config()> method like so:
-
-  sub init {
-    my $self = shift;
-    $self->register_config('XSLT_Style', sub { $self->set_style(@_) });
-  }
-
-There we added a configuration directive called C<XSLT_Style> which we'll use
-to define our stylesheet. We just need to implement the C<set_style()> method:
-
-  sub set_style {
-    my ($self, $config, $style) = @_;
-    my $key = $self->plugin_name . '::style';
-    $config->notes($key, $style);
-  }
-
-There we store the configuration in the C<$config->notes()> table (mod_perl
-users will recognise this as a dictionary storage container), making sure we
-don't clobber anyone elses name by using the key I<plugin_name>::style.
-
-Now we also need the corresponding C<get_style()> method:
-
-  sub get_style {
-    my $self = shift;
-    $self->config->notes($self->plugin_name . '::style');
-  }
+There we added a configuration directive called C<XSLTStyle> which we'll use
+to define our stylesheet. Using this default behaviour, AxKit will store any data
+in the configuration file as C<< $self->config('XSLTStyle') >>, returning an array if
+multiple values were given.
 
 Simple huh?
 
@@ -234,13 +212,13 @@ Now we need to tie all that together. First add this to your config after
   XSLT_Style myfirstplugin/stylesheets/default.xsl
 
 And now modify your C<hook_xmlresponse()> method to get this new value using
-C<get_style()>:
+C<< $self->config(...) >>:
 
   sub hook_xmlresponse {
     my ($self, $input) = @_;
     $self->log(LOGDEBUG, "Serving up a file");
     
-    my $stylesheet = $self->get_style;
+    my $stylesheet = $self->config('XSLTStyle');
     my $out = $input->transform(XSLT($stylesheet));
     
     return OK, $out;
@@ -297,36 +275,25 @@ Lets create our F<sort.xsl> file first:
 Note the use of the identity template. If you haven't used XSLT before take
 note of that - it's a very useful template for debugging.
 
-So now we need to store a list of XSLT stylesheets in our config, and make use
+So now we need to have a list of XSLT stylesheets in our config, and make use
 of a list in the C<< ->transform() >> method.
 
-The nice thing about C<register_config()> is that it automatically copes with
-multi-valued configuration. All we need to do is cope with storing multiple
-values. So we change our C<set_style()> sub as follows:
+The nice thing about AxKit's configuration mechanism is that it automatically copes with
+multi-valued configuration. We don't have to change anything to cope with multiple values.
 
-  sub set_style {
-    my ($self, $config, @styles) = @_;
-    my $key = $self->plugin_name . '::style';
-    $config->notes($key, \@styles);
-  }
-
-So rather than taking a single value we take an array and store a reference to
-that array.
-
-We don't need to change C<get_style()> as that still returns the right "key" - we
-just need to modify our expectations when we call C<get_style()>:
+When we retrieve the values, we just call C<< $self->config(...) >> in array context and we get all values instead of just one.
 
   sub hook_xmlresponse {
     my ($self, $input) = @_;
     $self->log(LOGDEBUG, "Serving up a file");
     
-    my $stylesheets = $self->get_style;
-    my $out = $input->transform(map XSLT($_), @$stylesheets);
+    my @stylesheets = $self->config('XSLTStyle');
+    my $out = $input->transform(map XSLT($_), @stylesheets);
     
     return OK, $out;
   }
 
-So instead of running C<XSLT()> once, we map it over C<@$stylesheets>.
+So instead of running C<XSLT()> once, we map it over C<@stylesheets>.
 
 And that's it. Restart AxKit and make sure this returns a table of sorted results.
 
@@ -336,6 +303,55 @@ And that's it. Restart AxKit and make sure this returns a table of sorted result
 
 =head1 What Are the APIs?
 
+We've glossed over a lot of what's actually going on under the hood here, so if
+you want to know more, here are some pointers to extended documentation.
 
+
+=head2 Plugins
+
+To find our more about the B<Plugin> class, which is the C<$self> object in the
+examples above, see L<AxKit2::Plugin>. This document also covers all the
+available hooks and what effect the return codes for each of those hooks may
+have.
+
+=head2 Transformations
+
+In AxKit2 the C<< $input->transform() >> method is provided by the Processor
+module. See L<AxKit2::Processor> for the API details in there.
+
+=head2 Config
+
+So far only seen in our C<get_style()> method. The config object gives us access
+to the axkit.conf file and a storage place for plugin-specific configuration
+parameters. See L<AxKit2::Config> for details on the API available.
+
+=head2 The Connection
+
+So far we haven't dealt with the client at all - AxKit did all that work for us.
+However many plugins will want to read headers, set outbound headers, and
+maybe even write data directly to the client. This is done through the
+Connection object which is accessed via C<< $self->client >> in a plugin. See
+L<AxKit2::Connection> for the available API.
+
+There are three client APIs which I'll detail here as a shortcut as they are the
+most used (though more documented in the above link).
+
+C<< $client->headers_in >> returns the inbound headers.
+
+C<< $client->headers_out >> returns the outbound headers.
+
+C<< $client->send_http_headers >> writes the outbound headers to the client.
+
+For documentation on the header object that C<headers_in()> and C<headers_out()>
+return, see L<AxKit2::HTTPHeaders>.
+
+=head2 Constants
+
+Finally, for a list of constants useful as return values from plugins, see
+L<AxKit2::Constants>.
+
+=head1 Copyright
+
+This document is Copyright 2006 Apache Software Foundation.
 
 =cut

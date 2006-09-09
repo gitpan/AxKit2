@@ -75,38 +75,19 @@ An XSLT stylesheet to use for transforming the error XML to HTML.
 Takes a boolean value (to the extreme!) to determine whether to include a
 stack trace in the output or not.
 
+=head2 StackTraceLog ( On | Off | 1 | 0 | Yes | No )
+
+Takes a boolean value to determine whether to output the stack trace to the log
+as well as the browser.
+
 =cut
 
+sub conf_ErrorStylesheet;
+sub conf_StackTrace : Validate(TAKEBOOL);
+sub conf_StackTraceLog : Validate(TAKEBOOL);
+
 sub init {
-    my $self = shift;
-    
-    $self->register_config('ErrorStylesheet', sub { $self->stylesheet(@_) });
-    $self->register_config('StackTrace', sub { $self->stacktrace(@_) });
-    
     $SIG{__DIE__} = sub { die AxKit2::StructuredError->new($_[0]) };
-}
-
-sub stylesheet {
-    my ($self, $conf) = (shift, shift);
-    
-    my $key = $self->plugin_name . '::stylesheet';
-    @_ and $conf->notes($key, shift);
-    $conf->notes($key);
-}
-
-sub stacktrace {
-    my ($self, $conf) = (shift, shift);
-    
-    my $key = $self->plugin_name . '::stacktrace';
-    @_ and $conf->notes($key, shift);
-    $conf->notes($key);
-}
-
-sub str_to_bool {
-    my $str = shift;
-    $str =~ /^(y(?:es)?|1|on)$/i and return 1;
-    $str =~ /^(no?|0|off)$/i and return 0;
-    die "Unkown boolean value: $str";
 }
 
 sub hook_error {
@@ -115,24 +96,25 @@ sub hook_error {
     
     $self->log(LOGDEBUG, "Turning error into XML");
     
-    my $with_trace = $self->stacktrace($self->config);
-    if ($with_trace) {
-        $with_trace = str_to_bool($with_trace);
+    if ($self->config('StackTraceLog')) {
+        $self->log(LOGERROR, $error->to_string(1));
     }
+    my $with_trace = $self->config('StackTrace');
     my $xml = $error->to_xml($with_trace);
     
-    my $stylesheet = $self->stylesheet($self->config);
+    my $stylesheet = $self->config('ErrorStylesheet');
     if (!$stylesheet) {
         $self->log(LOGERROR, "Need an ErrorStylesheet to transform the XML");
         $self->log(LOGERROR, $xml);
         return DECLINED;
     }
     
-    my $input = AxKit2::Processor->new($self, $self->client->headers_in->filename);
+    my $input = AxKit2::Processor->new($self->client, $self->client->headers_in->filename);
     $input->dom($xml);
     
     my $out = $input->transform(XSLT($stylesheet));
-    $out->output($self->client);
+    
+    $out->output();
     
     return OK;
 }
@@ -153,7 +135,9 @@ sub new {
 
 sub to_string {
     my $self = shift;
-    $self->{error};
+    my $with_stack = shift;
+    return $self->{error} unless $with_stack;
+    return join("\n", $self->{error}, map { "    from $_->[1]:$_->[2]" } @{$self->{stacktrace}});
 }
 
 sub _stack_trace {

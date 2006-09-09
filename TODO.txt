@@ -7,24 +7,27 @@ AxKit2 TODO List
       not yet written a plugin to parse these but it should be straightforward.
       Querystring data is parsed and available via the param() method.
 
-- Add logging everywhere at reasonable levels
-
 - Implement better output of HTTP headers. Particularly caching headers (ETags etc).
 
-- Improve file delivery for hook_response. Use AIO.
-
-- When no response plugin triggers, issue 500 error. Implement 404 error in serve_file.
-
-- Implement serve_dir plugin. Should fire at hook_response if we're looking at a directory (or DirectoryIndex doesn't exist).
-
 - Add tests (eek!).
-
-- Add POD docs.
+    (started)
 
 - Support some form of .config for directories.
+
+- Vhost support
 
 - Support HTMLDoc.
 
 - Support PassiveTeX.
 
 - Allow console to reload plugins
+
+- Catalyst plugin
+
+- Jifty plugin
+
+- SAWA plugin
+
+- Make "make install" work (mostly involves figuring out where to put plugin dir)
+
+- Update axkit.org to reflect AxKit2.

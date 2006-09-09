@@ -13,6 +13,8 @@
 # limitations under the License.
 #
 
+# A "Processor" is responsible for controlling XML transformations
+
 package AxKit2::Processor;
 
 use strict;
@@ -25,6 +27,7 @@ our @EXPORT = qw(XSP XSLT TAL XPathScript);
 
 use XML::LibXML;
 use AxKit2::Transformer::XSP;
+use AxKit2::Utils qw(bytelength);
 
 our $parser = XML::LibXML->new();
 
@@ -82,14 +85,14 @@ sub dom {
 
 sub output {
     my $self   = shift;
-    my $client = shift;
+    my $client = $self->{client};
     
     if ($self->{output}) {
         $self->{output}->($client, $self->dom);
     }
     else {
         my $out = $self->dom->toString;
-        $client->headers_out->header('Content-Length', length($out));
+        $client->headers_out->header('Content-Length', bytelength($out));
         $client->headers_out->header('Content-Type', 'text/xml');
         $client->send_http_headers;
         $client->write($out);
@@ -128,6 +131,9 @@ sub transform {
     return $self->new($self->client, $self->path, $dom, $outfunc);
 }
 
+# Exported transformer functions. These are really just short cuts for 
+# calling the transformer constructors.
+
 sub XSP {
     die "XSP takes no arguments" if @_;
     return AxKit2::Transformer::XSP->new();
@@ -142,7 +148,7 @@ sub XSLT {
 sub TAL {
     my $stylesheet = shift || die "TAL requires a stylesheet";
     require AxKit2::Transformer::TAL;
-    return AxKit2::Transformer::TAL->new($stylesheet);
+    return AxKit2::Transformer::TAL->new($stylesheet, @_);
 }
 
 sub XPathScript {
@@ -153,3 +159,105 @@ sub XPathScript {
 }
 
 1;
+
+__END__
+
+=head1 NAME
+
+AxKit2::Processor - AxKit's core XML processing engine
+
+=head1 DESCRIPTION
+
+The C<Processor> is provided to the C<xmlresponse> hook in order to facilitate
+transforming XML prior to being output to the browser. A typical XSLT example
+might look like this:
+
+  sub hook_xmlresponse {
+    my ($self, $input) = @_;
+    
+    # $input is a AxKit2::Processor object
+    
+    my $stylesheet = './myfirstplugin/stylesheets/default.xsl';
+    my $out = $input->transform(XSLT($stylesheet));
+    
+    # $out is also an AxKit2::Processor object
+    
+    return OK, $out;
+  }
+
+=head1 API
+
+=head2 C<< CLASS->new( CLIENT, PATH [, INPUT [, OUTPUT]] ) >>
+
+Normally you would not need to call the constructor - this is done for you.
+
+=head2 C<< $obj->path >>
+
+Returns the path to the object being requested. Normally the same as the
+request filename.
+
+=head2 C<< $obj->input >>
+
+This method returns the input DOM if there was one. This may be useful for
+a transformer to know - for example XSP will need to recompile its code if
+there was an input DOM because it implies XSP -> XSP.
+
+Normally you would just access the input DOM via C<< $obj->dom >>.
+
+=head2 C<< $obj->client >>
+
+The C<AxKit2::Connection> object for this request.
+
+=head2 C<< $obj->dom( [ INPUT ] ) >>
+
+Get/set the DOM for whatever is being transformed. Auto-generates a DOM if there
+wasn't one already stored in the I<input>.
+
+See L<XML::LibXML::Document> for the DOM API.
+
+=head2 C<< $obj->output() >>
+
+Sends the transformation result to the browser. You do not need to call this as
+it is performed by AxKit when you return (C<OK>, PROCESSOR) from your xmlresponse
+hook.
+
+=head2 C<< $obj->transform( LIST ) >>
+
+Performs the transformations specified in C<LIST>. The transform method is
+extremely flexible in how it will accept this list of transformations.
+
+The following are all equivalent:
+
+=over 4
+
+=item * As strings:
+
+  $input->transform(qw(
+            XSP
+            XSLT(/path/to/stylesheet.xsl)
+            XSLT(/path/to/xml2html.xsl)
+            ));
+
+=item * Via helper functions:
+
+  $input->transform(
+        XSP()
+     => XSLT("/path/to/stylesheet.xsl")
+     => XSLT("/path/to/xml2html.xsl")
+     );
+
+=item * By constructing transformers directly:
+
+  $input->transform(
+        AxKit2::Transformer::XSP->new(),
+        AxKit2::Transformer::XSLT->new("/path/to/stylesheet.xsl"),
+        AxKit2::Transformer::XSLT->new("/path/to/xml2html.xsl"),
+    );
+
+=back
+
+Note that C<XSLT()> can take a list of key/value pairs to pass to the stylesheet
+as parameters. Unlike AxKit1 the stylesheet does NOT automatically get access to
+all the querystring parameters - you have to explicitly pass these in.
+
+=cut

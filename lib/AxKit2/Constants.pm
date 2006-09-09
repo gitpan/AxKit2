@@ -13,6 +13,8 @@
 # limitations under the License.
 #
 
+# System constants. Mostly plugin return codes and HTTP response codes
+
 package AxKit2::Constants;
 
 use strict;
@@ -35,14 +37,24 @@ my %log_levels = (
 
 # return codes
 my %return_codes = (
+        # HTTP Codes
         OK                     => 200,
+        NO_CONTENT             => 204,
+        PARTIAL_CONTENT        => 206,
+        REDIRECT               => 302,
         NOT_MODIFIED           => 304,
         BAD_REQUEST            => 400,
+        UNAUTHORIZED           => 401,
         FORBIDDEN              => 403,
         NOT_FOUND              => 404,
         SERVER_ERROR           => 500,
+        NOT_IMPLEMENTED        => 501,
+        SERVICE_UNAVAILABLE    => 503,
+        
+        # AxKit specific codes
         DECLINED               => 909,
         DONE                   => 910,
+        CONTINUATION           => 911,
 );
 
 use vars qw(@ISA @EXPORT);
@@ -87,40 +99,61 @@ sub log_level {
 
 AxKit2::Constants - Constants for plugins to use
 
-=head1 CONSTANTS
+=head1 HOOK CONSTANTS
 
-See L<README.plugins> for hook specific information on applicable
+See L<AxKit2::Plugin> for hook specific information on applicable
 constants.
 
 Constants available:
 
 =over 4
 
-=item C<OK>
-
-Return this only from the queue phase to indicate the mail was queued
-successfully.
-
-=item C<DENY>
-
-Returning this from a hook causes a 5xx error (hard failure) to be
-returned to the connecting client.
-
-=item C<DENYSOFT>
-
-Returning this from a hook causes a 4xx error (temporary failure - try
-again later) to be returned to the connecting client.
-
 =item C<DECLINED>
 
-Returning this from a hook implies success, but tells qpsmtpd to go
+Returning this from a hook implies success, but tells axkit to go
 on to the next plugin.
+
+=item C<OK>
+
+Returning this from a hook implies success, but tells axkit to skip any more
+plugins for this phase.
 
 =item C<DONE>
 
-Returning this from a hook implies success, but tells qpsmtpd to
-skip any remaining plugins for this phase.
+C<DONE> is generally hook specific, see L<AxKit2::Plugin/AVAILABLE HOOKS> for
+details.
 
 =back
+
+You can, in most hooks, return any of the HTTP response codes below.
+
+=head1 HTTP RESPONSE CONSTANTS
+
+        OK                     => 200,
+        NO_CONTENT             => 204,
+        PARTIAL_CONTENT        => 206,
+        REDIRECT               => 302,
+        NOT_MODIFIED           => 304,
+        BAD_REQUEST            => 400,
+        UNAUTHORIZED           => 401,
+        FORBIDDEN              => 403,
+        NOT_FOUND              => 404,
+        SERVER_ERROR           => 500,
+        NOT_IMPLEMENTED        => 501,
+        SERVICE_UNAVAILABLE    => 503,
+
+=head1 LOGGING CONSTANTS
+
+The following log level constants are also available:
+
+        LOGDEBUG   => 7,
+        LOGINFO    => 6,
+        LOGNOTICE  => 5,
+        LOGWARN    => 4,
+        LOGERROR   => 3,
+        LOGCRIT    => 2,
+        LOGALERT   => 1,
+        LOGEMERG   => 0,
+
 
 =cut

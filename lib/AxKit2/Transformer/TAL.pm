@@ -20,9 +20,11 @@ use warnings;
 
 use base qw(AxKit2::Transformer::XSLT);
 
+use AxKit2::Utils qw(bytelength);
+
 my $parser  = XML::LibXML->new();
 my $xslt    = XML::LibXSLT->new();
-my $tal2xsl = $xslt->parse_stylesheet($parser->parse_fh(\*DATA));
+my $data    = do { local $/; <DATA> };
 
 my %cache;
 sub transform {
@@ -36,15 +38,30 @@ sub transform {
     my $stylesheet = $cache{$stylefile};
     if (!$stylesheet) {
         my $style_doc = $parser->parse_file($stylefile);
+        my $xslparams = $self->mk_params();
+        my $tal_style = $data;
+        $tal_style    =~ s/!TALPARAMS!/$xslparams/;
+        # print "Parsing: $tal_style\n";
+        my $tal2xsl   = $xslt->parse_stylesheet($parser->parse_string($tal_style));
         my $xslt_dom  = $tal2xsl->transform($style_doc);
         $stylesheet   = $xslt->parse_stylesheet($xslt_dom);
         
         $cache{$stylefile} = $stylesheet;
     }
     
-    my $results = $stylesheet->transform($dom);
+    my $results = $stylesheet->transform($dom, AxKit2::Transformer::XSLT::fixup_params(@{ $self->{params} }));
     
     return $results, sub { $self->output(@_) };
+}
+
+sub mk_params {
+    my $self = shift;
+    my %params = @{$self->{params}};
+    my $output = '';
+    for (keys %params) {
+        $output .= "<xsl:param name='$_'/>\n";
+    }
+    return $output;
 }
 
 sub output {
@@ -61,7 +78,7 @@ sub output {
     }
     my $enc = "UTF-8";
     
-    $client->headers_out->header('Content-Length', length($out));
+    $client->headers_out->header('Content-Length', bytelength($out));
     $client->headers_out->header('Content-Type', "$ct; charset=$enc");
     $client->send_http_headers;
     $client->write($out);
@@ -122,6 +139,7 @@ __DATA__
                 <xslout:output encoding="utf-8" method="xml"/>
               </xsl:otherwise>
             </xsl:choose>
+            !TALPARAMS!
             <xsl:apply-templates select="//*[@tal:include]" mode="init"/>
             <xsl:apply-templates select="//*[@tal:match]" mode="init"/>
             <xsl:apply-templates select="//*[@metal:use-macro]" mode="init"/>

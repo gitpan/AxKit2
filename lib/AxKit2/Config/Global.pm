@@ -65,12 +65,19 @@ sub plugin_dir {
     $self->{PluginDir};
 }
 
+sub cached_hooks {
+    my $self = shift;
+    # never cache at the global level
+    return;
+}
+
 sub notes {
     my $self = shift;
     my $key = shift || die "notes() requires a key";
     
-    @_ and $self->{Notes}{$key} = shift;
-    $self->{Notes}{$key};
+    @_ and $self->{Notes}{$key} = [ @_ ];
+    return @{ $self->{Notes}{$key} || [] } if wantarray;
+    ${ $self->{Notes}{$key} || [] }[0];
 }
 
 1;

@@ -55,9 +55,7 @@ use RDF::Core::Resource;
 use RDF::Core::Literal;
 use RDF::Core::Statement;
 use RDF::Core::Model::Serializer;
-use AxKit2::Utils qw(uri_decode uri_encode);
-
-use constant EPEG_AVAILABLE => eval { require Image::Epeg };
+use AxKit2::Utils qw(uri_decode uri_encode bytelength);
 
 our $DEFAULT_SIZE = '133 640 800 1024';
 
@@ -121,7 +119,7 @@ sub hook_xmlresponse {
         if ($cache_obj->get_created_at() >= (stat($file))[9]) {
             my $out = $cache->get("$file+$size");
             $self->log(LOGINFO, "Serving cached image");
-            $client->headers_out->header('Content-Length', length($out));
+            $client->headers_out->header('Content-Length', bytelength($out));
             $client->headers_out->header('Content-Type', $ct);
             $client->send_http_headers;
             # using ->get here makes sure Cache::Cache expires stuff
@@ -136,22 +134,11 @@ sub hook_xmlresponse {
     
     my $out;
     
-    if ($type eq 'jpeg' && EPEG_AVAILABLE) {
-        my $epg = Image::Epeg->new($file);
-        $epg->resize($size, $size, Image::Epeg::MAINTAIN_ASPECT_RATIO());
-        $out = $epg->get_data();
-        if (!$out) {
-            # Epeg didn't work. Resort to Imager anyway
-            $self->resize_image($size, $file, $type, \$out);
-        }
-    }
-    else {
-        $self->resize_image($size, $file, $type, \$out);
-    }
+    $self->resize_image($size, $file, $type, \$out);
     
     $cache->set("$file+$size", $out);
     
-    $client->headers_out->header('Content-Length', length($out));
+    $client->headers_out->header('Content-Length', bytelength($out));
     $client->headers_out->header('Content-Type', $ct);
     $client->send_http_headers;
     # using ->get here makes sure Cache::Cache expires stuff
@@ -175,7 +162,19 @@ sub resize_image {
     $quality = 'normal' if $quality ne 'preview';
     $quality = 'normal' if $self->client->param('size') ne 'thumb';
     
-    $self->log(LOGINFO, "Scaling to $size");
+    $self->log(LOGINFO, "Scaling to $size with quality: $quality");
+    
+    my $doublesize = $size < (($w > $h ? $w : $h)/2);
+    
+    if ($quality eq 'normal' && $doublesize) {
+        $self->log(LOGINFO, "Doing an initial shrinkage in preview mode");
+        my $thumb = $image->scale(qtype => "preview",
+                                  $w > $h ? (xpixels => $w/2)
+                                          : (ypixels => $h/2)
+                                 );
+        
+        $image = $thumb;
+    }
     
     my $thumb = $image->scale(qtype => $quality, 
                                $w > $h ?
@@ -183,13 +182,15 @@ sub resize_image {
                                  : (ypixels => $size)
                              );
     
-    $self->log(LOGINFO, "sharpening $thumb");
-    
-    # Sharpen a bit with a convolve filter
-    $thumb->filter(
-        type=>'conv',
-        coef => [-0.2, 1, -0.2]
-        ) if $quality eq 'normal';
+    if ($doublesize) {
+        $self->log(LOGINFO, "sharpening $thumb");
+        
+        # Sharpen a bit with a convolve filter
+        $thumb->filter(
+            type=>'conv',
+            coef => [-0.2, 1, -0.2]
+            ) if $quality eq 'normal';
+    }
     
     $thumb->write(data => $out, type => $type)
         or die "Cannot write to scalar: ", $thumb->errstr;
